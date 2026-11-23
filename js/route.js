@@ -72,10 +72,13 @@ const Route = (() => {
   }
 
   // Position auf die Route projizieren. hintS: letzte bekannte Stelle (für Mehrdeutigkeit).
-  function project(route, lat, lon, hintS) {
+  // win = { from, to } (Meter entlang der Route): nur Abschnitte in diesem Fenster werden betrachtet.
+  // Damit springt die Position nicht auf einen benachbarten Streckenteil, der nur räumlich nahe liegt.
+  function project(route, lat, lon, hintS, win) {
     const k = Math.cos(lat * Geo.D2R), M = Geo.M;
     let best = null;
     for (let i = 0; i < route.pts.length - 1; i++) {
+      if (win && (route.cum[i + 1] < win.from || route.cum[i] > win.to)) continue;
       const a = route.pts[i], b = route.pts[i + 1];
       const ax = (a[1] - lon) * M * k, ay = (a[0] - lat) * M;
       const bx = (b[1] - lon) * M * k, by = (b[0] - lat) * M;

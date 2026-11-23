@@ -10,7 +10,8 @@ function createSim(getRoute, onPosition, onEnd) {
     const pt = Route.pointAt(r, sim.s);
     let p = [pt.lat, pt.lon];
     if (sim.offset) p = Geo.offset(p, pt.bearing + 90, sim.offset); // seitlicher Versatz (rechts positiv)
-    onPosition(p[0], p[1]);
+    // Dritter Parameter wie beim GPS: Geschwindigkeit (m/s) und Richtung (Grad)
+    onPosition(p[0], p[1], { speed: sim.playing ? sim.speedKmh / 3.6 : 0, heading: pt.bearing });
   };
 
   sim.tick = function (nowMs) {

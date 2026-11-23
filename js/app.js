@@ -1,6 +1,6 @@
 'use strict';
-// Tf-Helfer, Teil A: Hauptlogik. Alles hängt an EINER Funktion: setPosition(lat, lon).
-// Heute ruft die Simulation sie auf, später das GPS.
+// Tf-Helfer: Hauptlogik. Alles hängt an EINER Funktion: onFix(wert, quelle).
+// Die Simulation (Testmodus) und das GPS (js/gps.js) rufen sie auf; immer ist nur eine Quelle aktiv.
 
 // Das Netz (OSM-Daten) liegt bei der App. Persönliche Daten gibt es NUR auf dem Gerät (IndexedDB, siehe storage.js)
 // und kommen per "Laden" dorthin: nie vom Server.
@@ -12,7 +12,24 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ohne Speicher weiterarbeiten */ } }
 };
-const state = { passed: 0, net: null, personal: {}, route: null, sel: null, pos: null, proj: null, heading: 0, lastS: 0, prevPos: null };
+const state = {
+  passed: 0, net: null, personal: {}, route: null, sel: null, pos: null, proj: null, heading: 0, lastS: 0,
+  source: 'none',        // aktive Positionsquelle: 'none' | 'gps' | 'sim' (nie mehr als eine)
+  fix: null,             // letzter Wert der Quelle { lat, lon, acc, speed, heading, at }
+  hasLock: false,        // gibt es schon eine auf die Strecke bezogene Position?
+  lastApplyAt: 0,        // Zeitpunkt des letzten benutzten Wertes
+  cand: null,            // Kandidat für "Position liegt woanders auf der Strecke"
+  headingSet: false, speed: 0, q: 'off', gpsError: null
+};
+
+// Einstellungen der Positionsverarbeitung (fest im Code, nicht in den Einstellungen)
+const GPS_MAX_ACC_M = 100;      // Genauigkeit schlechter als 100 m: Wert wird nicht benutzt ("GPS ungenau")
+const STALE_MS = 10000;         // länger als 10 s kein neuer Wert: "Kein GPS-Signal"
+const WINDOW_M = 3000;          // Suchfenster ± 3 km entlang der Strecke um die letzte bekannte Stelle
+const REACQ_MS = 120000;        // nach mehr als 2 Minuten ohne Wert wird wieder auf der ganzen Strecke gesucht
+const REACQ_CONFIRM_MS = 15000; // so lange muss eine ganz andere Stelle durchgehend passen, bevor die Position dorthin springt
+const MIN_HEAD_SPEED = 2;       // m/s: darunter bleibt der Pfeil in der letzten Richtung
+const clock = { now: () => Date.now() };   // austauschbar für Tests
 
 // ---------- Anzeige-Hilfen ----------
 // Entfernungen überall in km mit einer Nachkommastelle (auch unter 1 km: 0,9 km ... 0,0 km). Keine Meter.
@@ -31,7 +48,7 @@ const themeBtns = document.querySelectorAll('[data-set-theme]');
 function getColors() {
   const cs = getComputedStyle(document.documentElement);
   const g = n => cs.getPropertyValue(n).trim();
-  return { mapbg: g('--mapbg'), route: g('--route'), done: g('--done'), tx: g('--tx'), panel: g('--panel') };
+  return { mapbg: g('--mapbg'), route: g('--route'), done: g('--done'), tx: g('--tx'), panel: g('--panel'), mut: g('--mut') };
 }
 function applyTheme(t) {
   const root = document.documentElement;
@@ -42,23 +59,186 @@ function applyTheme(t) {
 }
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => map.redraw());
 
-// ---------- Karte, Simulation ----------
+// ---------- Karte und Positionsquellen ----------
+// Zwei Quellen mit demselben Ausgang: Simulation (Testmodus, nur PC) und GPS. Beide rufen onFix(wert, quelle) auf.
+// Ein Wert hat die Form { lat, lon, acc (m), speed (m/s oder null), heading (Grad oder null) }.
 const map = createMap($('map'), getColors);
-const sim = createSim(() => state.route, (lat, lon) => setPosition(lat, lon), () => { $('simPlay').textContent = 'Start'; });
+const sim = createSim(
+  () => state.route,
+  (lat, lon, ex) => onFix({ lat, lon, acc: 5, speed: ex ? ex.speed : 0, heading: ex ? ex.heading : null }, 'sim'),
+  () => { $('simPlay').textContent = 'Start'; }
+);
+const gps = createGps({
+  onFix: f => onFix(f, 'gps'),
+  onError: e => { state.gpsError = e; updateQuality(); updateGpsUi(); }
+});
 
-// ---------- Position (einziger Eingang für Simulation und später GPS) ----------
-function setPosition(lat, lon) {
-  const prev = state.pos;
-  state.pos = { lat, lon };
-  if (state.route) {
-    const pr = Route.project(state.route, lat, lon, state.lastS);
-    state.proj = pr;
-    state.lastS = pr.s;
-    if (pr.off <= OFF_ROUTE_M) state.heading = pr.bearing;
-    else if (prev && Geo.dist([prev.lat, prev.lon], [lat, lon]) > 5) state.heading = Geo.bearing([prev.lat, prev.lon], [lat, lon]);
-    map.setPosition(state.pos, state.heading, pr.s);
+// Eingang für jeden Positionswert. Nur die aktive Quelle zählt.
+function onFix(fix, src) {
+  if (src !== state.source) return;
+  const now = clock.now();
+  const prev = state.fix;
+  state.fix = { lat: fix.lat, lon: fix.lon, acc: Number.isFinite(fix.acc) ? fix.acc : 0, speed: fix.speed, heading: fix.heading, at: now };
+  state.gpsError = null;
+  // Zu ungenaue Werte werden nicht benutzt: die Anzeige bleibt stehen und wird als "GPS ungenau" markiert
+  if (state.fix.acc <= GPS_MAX_ACC_M) applyFix(state.fix, prev, now);
+  updateQuality();
+}
+
+function fixSpeed(fix, prev) {
+  if (Number.isFinite(fix.speed) && fix.speed >= 0) return fix.speed;
+  if (prev && fix.at > prev.at) return Geo.dist([prev.lat, prev.lon], [fix.lat, fix.lon]) / ((fix.at - prev.at) / 1000);
+  return 0;
+}
+
+// Wert auf die Strecke legen (Projektion), Richtung bestimmen, Anzeige aktualisieren
+function applyFix(fix, prev, now) {
+  const route = state.route;
+  state.pos = { lat: fix.lat, lon: fix.lon };
+  if (!route) return;
+  // Ganze Strecke durchsuchen: beim ersten Wert und nach mehr als 2 Minuten Signalverlust. Sonst nur ein Fenster um die letzte Stelle.
+  const whole = !state.hasLock || now - state.lastApplyAt > REACQ_MS;
+  let pr;
+  if (whole) {
+    pr = Route.project(route, fix.lat, fix.lon, state.lastS);
+    state.cand = null;
+  } else {
+    pr = Route.project(route, fix.lat, fix.lon, state.lastS, { from: state.lastS - WINDOW_M, to: state.lastS + WINDOW_M });
+    if (!pr) pr = Route.project(route, fix.lat, fix.lon, state.lastS);
+    if (pr.off > OFF_ROUTE_M) {
+      // Im Fenster liegt die Strecke weit weg. Passt der Wert anderswo auf die Strecke, wird das nur dann
+      // übernommen, wenn es durchgehend (REACQ_CONFIRM_MS) dieselbe Stelle ist. Ein einzelner Ausreißer ändert nichts.
+      const g = Route.project(route, fix.lat, fix.lon, state.lastS);
+      if (g.off <= OFF_ROUTE_M && Math.abs(g.s - state.lastS) > WINDOW_M) {
+        if (state.cand && Math.abs(g.s - state.cand.s) < 500) {
+          if (now - state.cand.since >= REACQ_CONFIRM_MS) { pr = g; state.cand = null; }
+        } else state.cand = { s: g.s, since: now };
+      } else state.cand = null;
+      if (pr !== g) pr = Object.assign({}, pr, { s: state.lastS }); // Entfernungen bleiben bei der letzten bekannten Stelle
+    } else state.cand = null;
   }
+  state.proj = pr;
+  state.lastS = pr.s;
+  state.hasLock = true;
+  state.lastApplyAt = now;
+  // Richtung: nur bei Geschwindigkeit über MIN_HEAD_SPEED, sonst bleibt die letzte Richtung
+  const spd = fixSpeed(fix, prev);
+  state.speed = spd;
+  if (spd > MIN_HEAD_SPEED) {
+    if (Number.isFinite(fix.heading)) state.heading = fix.heading;
+    else if (prev && Geo.dist([prev.lat, prev.lon], [fix.lat, fix.lon]) > 3) state.heading = Geo.bearing([prev.lat, prev.lon], [fix.lat, fix.lon]);
+    state.headingSet = true;
+  } else if (!state.headingSet) state.heading = pr.bearing; // Anfang: Richtung der Strecke
+  map.setPosition(state.pos, state.heading, pr.s);
   render();
+}
+
+// Ohne Quelle (oder vor dem ersten Wert): Anzeige ab Streckenanfang, grau
+function showStart() {
+  const r = state.route;
+  if (!r) return;
+  const p = r.pts[0];
+  state.pos = { lat: p[0], lon: p[1] };
+  state.proj = Route.project(r, p[0], p[1], 0);
+  state.lastS = state.proj.s;
+  state.heading = state.proj.bearing;
+  state.headingSet = false;
+  map.setPosition(state.pos, state.heading, state.proj.s);
+  render();
+}
+
+// Zustand des Signals: ok | bad (zu ungenau) | lost (kein neuer Wert) | wait (noch nichts) | off (keine Quelle)
+function updateQuality() {
+  const now = clock.now();
+  let q = 'ok', text = '';
+  if (state.source === 'none') { q = 'off'; text = 'GPS aus – Anzeige ab Streckenanfang'; }
+  else if (state.gpsError && !state.fix) { q = 'wait'; text = 'GPS: ' + gpsErrorShort(state.gpsError.code); }
+  else if (!state.fix) { q = 'wait'; text = 'Warte auf GPS-Signal …'; }
+  else if (now - state.fix.at > STALE_MS) { q = 'lost'; text = 'Kein GPS-Signal seit ' + Math.round((now - state.fix.at) / 1000) + ' s'; }
+  else if (state.fix.acc > GPS_MAX_ACC_M) { q = 'bad'; text = 'GPS ungenau'; }
+  state.q = q;
+  const sb = $('gpsStatus');
+  sb.classList.toggle('hide', q === 'ok');
+  sb.classList.toggle('quiet', q === 'off');
+  if (sb.textContent !== text) sb.textContent = text;
+  document.querySelector('.side').classList.toggle('stale', q !== 'ok');
+  map.setStale(q !== 'ok');
+  // "Nicht auf der Strecke" nur bei brauchbarem Signal
+  const pr = state.proj;
+  const off = q === 'ok' && !!pr && pr.off > OFF_ROUTE_M;
+  $('offwarn').classList.toggle('hide', !off);
+  if (off) $('offdist').textContent = 'Abstand zur Strecke: ' + fmtDist(pr.off);
+}
+
+function isMoving() {
+  return state.source !== 'none' && !!state.fix && clock.now() - state.fix.at < STALE_MS && state.speed > MIN_HEAD_SPEED;
+}
+
+function setSource(kind) {
+  if (kind === state.source) return;
+  if (state.source === 'gps') gps.stop();
+  if (state.source === 'sim') { sim.playing = false; $('simPlay').textContent = 'Start'; }
+  state.source = kind;
+  state.fix = null; state.hasLock = false; state.cand = null; state.gpsError = null; state.speed = 0;
+  $('testMode').checked = kind === 'sim';
+  $('simPanel').classList.toggle('hide', kind !== 'sim');
+  store.set('tf.gps', kind === 'gps' ? 'on' : 'off');
+  updateQuality();
+  if (kind === 'gps') gps.start();
+  if (kind === 'sim') sim.emit();
+  updateQuality();
+  updateGpsUi();
+}
+
+// ---------- GPS in Info ----------
+function gpsErrorShort(code) {
+  return code === 'denied' ? 'Zugriff verweigert' : code === 'timeout' ? 'Zeitüberschreitung' : code === 'unsupported' ? 'nicht unterstützt' : 'nicht verfügbar';
+}
+const GPS_HELP = {
+  denied: 'Der Zugriff auf den Standort wurde verweigert. So erlauben Sie ihn: In Chrome auf das Symbol links neben der Adresse tippen, Berechtigungen, Standort, Zulassen. Bei der installierten App: Android-Einstellungen, Apps, Chrome, Berechtigungen, Standort, Zulassen. Danach hier „Erneut versuchen“ drücken.',
+  unavailable: 'Der Standort ist nicht verfügbar. Standort (GPS) des Tablets in den Schnelleinstellungen einschalten und freie Sicht zum Himmel suchen (nicht im Gebäude). Es wird weiter versucht.',
+  timeout: 'Noch kein Wert vom GPS erhalten. Freie Sicht zum Himmel? Das erste Signal kann einige Minuten dauern. Es wird weiter versucht.',
+  unsupported: 'Dieses Gerät oder diese Seite erlaubt keine Standortabfrage. Die App muss über HTTPS (oder localhost) geöffnet sein.'
+};
+function updateGpsUi() {
+  const on = state.source === 'gps';
+  const stopped = on && !gps.running;   // z. B. Zugriff verweigert
+  $('gpsBtn').textContent = stopped ? 'Erneut versuchen' : on ? 'GPS ausschalten' : 'GPS einschalten';
+  $('gpsBtn').classList.toggle('primary', !on || stopped);
+  const line = $('gpsInfo'), help = $('gpsHelp');
+  let text = 'GPS ist aus.', bad = false, hint = '';
+  if (state.source === 'sim') text = 'GPS ist aus. Testmodus (Simulation) ist aktiv.';
+  else if (on) {
+    const f = state.fix, now = clock.now();
+    if (state.gpsError && !f) { text = 'GPS: ' + gpsErrorShort(state.gpsError.code) + '.'; bad = true; hint = GPS_HELP[state.gpsError.code]; }
+    else if (!f) text = 'GPS eingeschaltet. Warte auf das erste Signal …';
+    else {
+      const age = Math.round((now - f.at) / 1000);
+      const acc = Math.round(f.acc) + ' m';
+      if (state.q === 'lost') { text = 'Kein GPS-Signal seit ' + age + ' s. Letzte Genauigkeit ' + acc + '.'; bad = true; }
+      else if (state.q === 'bad') { text = 'GPS ungenau: Genauigkeit ' + acc + ' (schlechter als 100 m). Letzter Wert vor ' + age + ' s.'; bad = true; }
+      else text = 'GPS aktiv · Genauigkeit ' + acc + ' · letzter Wert vor ' + age + ' s';
+      if (state.gpsError) { hint = GPS_HELP[state.gpsError.code]; }
+    }
+  }
+  line.textContent = text;
+  line.classList.toggle('bad', bad);
+  help.textContent = hint || '';
+  help.classList.toggle('hide', !hint);
+}
+$('gpsBtn').onclick = () => {
+  if (state.source === 'gps' && !gps.running) { state.gpsError = null; gps.start(); updateQuality(); updateGpsUi(); return; } // nach Verweigerung: erneut versuchen
+  setSource(state.source === 'gps' ? 'none' : 'gps');
+};
+$('gpsStatus').onclick = () => $('infoBtn').click();
+
+// War GPS beim letzten Mal an und ist die Erlaubnis schon erteilt, startet es von selbst. Sonst nur auf Knopfdruck.
+async function gpsAutostart() {
+  if (store.get('tf.gps') !== 'on') return;
+  try {
+    const p = await navigator.permissions.query({ name: 'geolocation' });
+    if (p.state === 'granted' && state.source === 'none') setSource('gps');
+  } catch (e) { /* ohne Permissions-API nur per Knopf */ }
 }
 
 // ---------- Anzeige rechts ----------
@@ -199,9 +379,7 @@ function render() {
   $('distGoal').textContent = fmtDist(r.total - s);
   $('goalName').textContent = zielSt.name + ' – ' + zielSt.ril100;
 
-  const off = pr.off > OFF_ROUTE_M;
-  $('offwarn').classList.toggle('hide', !off);
-  if (off) $('offdist').textContent = 'Abstand zur Strecke: ' + fmtDist(pr.off);
+  updateQuality(); // "Nicht auf der Strecke" und grau/aktuell je nach Signal
 
   if (!dragging) $('simPos').value = Math.round(sim.s);
   $('simPosVal').textContent = (sim.s / 1000).toFixed(1).replace('.', ',') + ' km';
@@ -218,7 +396,7 @@ function applyRoute(sel) {
   if (res.error) return res.error;
   state.sel = { start: sel.start, ziel: sel.ziel, via: res.via };
   state.route = res;
-  state.proj = null; state.lastS = 0; state.pos = null; state.passed = 0;
+  state.proj = null; state.lastS = 0; state.pos = null; state.passed = 0; state.hasLock = false; state.cand = null;
   store.set('tf.route', JSON.stringify(state.sel));
   const nm = id => state.net.stations.find(s => s.ril100 === id).name;
   $('routeName').textContent = nm(res.startId) + ' → ' + nm(res.zielId) + (res.via.length ? '  (+' + res.via.length + ')' : '');
@@ -226,9 +404,12 @@ function applyRoute(sel) {
   sim.reset();
   $('simPlay').textContent = 'Start';
   map.setRoute(res);
-  map.setOverview(false);
-  $('zall').textContent = 'Gesamte Strecke';
-  sim.emit();
+  map.setFollow();
+  // Gibt es schon einen brauchbaren Wert der aktiven Quelle, gilt er sofort für die neue Route
+  const f = state.fix;
+  if (state.source === 'sim') sim.emit();
+  else if (state.source === 'gps' && f && f.acc <= GPS_MAX_ACC_M) applyFix(f, null, clock.now());
+  else showStart();
   return null;
 }
 
@@ -278,9 +459,12 @@ $('routeForm').onsubmit = e => {
 };
 
 // ---------- Bedienelemente ----------
-$('zin').onclick = () => { map.zoomIn(); $('zall').textContent = 'Gesamte Strecke'; };
-$('zout').onclick = () => { map.zoomOut(); $('zall').textContent = 'Gesamte Strecke'; };
-$('zall').onclick = () => { $('zall').textContent = map.toggleOverview() ? 'Folgen' : 'Gesamte Strecke'; };
+$('zin').onclick = () => map.zoomIn();
+$('zout').onclick = () => map.zoomOut();
+$('zall').onclick = () => map.showAll();
+$('zfollow').onclick = () => map.setFollow();
+// "Folgen" zeigt an, ob die Karte der Position folgt (nach einer Geste oder "Gesamte Strecke" ist es aus)
+map.onViewChange = () => $('zfollow').setAttribute('aria-pressed', String(map.isFollowing()));
 themeBtns.forEach(b => { b.onclick = () => applyTheme(b.dataset.setTheme); });
 
 // Schriftgröße (Klein / Mittel / Groß) über die CSS-Variable --fs
@@ -293,11 +477,8 @@ function applyFs(v) {
 }
 fsBtns.forEach(b => { b.onclick = () => applyFs(b.dataset.setFs); });
 
-// Testmodus: Simulationsleiste nur auf Wunsch, standardmäßig aus (wird nicht gespeichert)
-$('testMode').onchange = e => {
-  $('simPanel').classList.toggle('hide', !e.target.checked);
-  if (!e.target.checked) { sim.playing = false; $('simPlay').textContent = 'Start'; }
-};
+// Testmodus: nur auf Wunsch (PC), standardmäßig aus, wird nicht gespeichert. Er schaltet das GPS aus (nur eine Quelle).
+$('testMode').onchange = e => setSource(e.target.checked ? 'sim' : 'none');
 $('infoBtn').onclick = () => $('infoDlg').showModal();
 $('infoClose').onclick = () => $('infoDlg').close();
 $('phoneClose').onclick = () => $('phoneDlg').close();
@@ -354,7 +535,15 @@ async function init() {
   sel.via = (sel.via || []).filter(v => ids.includes(v));
   if (applyRoute(sel)) applyRoute({ start: ids[0], ziel: ids[ids.length - 1], via: [] });
   setInterval(() => { sim.tick(performance.now()); }, 50);
+  // Jede Sekunde: Signalzustand und Anzeige in Info prüfen. Die Simulation im Stand meldet sich weiter (wie ein GPS im Stand).
+  setInterval(() => {
+    if (state.source === 'sim' && !sim.playing) sim.emit();
+    updateQuality();
+    updateGpsUi();
+  }, 1000);
+  updateGpsUi();
   if (typeof datenInit === 'function') datenInit();
+  gpsAutostart();
 }
-window.tf = { state, sim, map, setPosition, applyRoute, fmtDist }; // zum Testen in der Konsole
+window.tf = { state, sim, gps, map, clock, onFix, setSource, applyRoute, fmtDist, updateQuality }; // zum Testen in der Konsole
 init();

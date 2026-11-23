@@ -32,7 +32,9 @@
       <button id="zin" type="button" aria-label="Vergrößern">+</button>
       <button id="zout" type="button" aria-label="Verkleinern">−</button>
       <button id="zall" type="button" class="wide">Gesamte Strecke</button>
+      <button id="zfollow" type="button" class="wide" aria-pressed="true">Folgen</button>
     </div>
+    <button id="gpsStatus" type="button" class="gpsstat hide" aria-live="polite"></button>
     <div id="simPanel" class="simpanel hide" aria-label="Testmodus Simulation">
       <div class="simrow">
         <button id="simPlay" type="button" class="primary">Start</button>
@@ -150,7 +152,12 @@
   <h2 id="infoTitle">Info</h2>
   <p>Tf-Helfer ist ein persönliches Hilfsmittel. Es ersetzt nicht EBuLa, Fahrplan, La und Streckenbuch.</p>
   <p>Entfernungen werden entlang der Streckengeometrie berechnet. Das sind keine Kilometerangaben aus dem Streckenbuch.</p>
-  <p>Die Position stammt derzeit aus dem Testmodus (Simulation). GPS folgt später.</p>
+  <section class="datasec gpssec" aria-label="GPS">
+    <h3>GPS</h3>
+    <div class="btnrow"><button type="button" id="gpsBtn" class="primary">GPS einschalten</button></div>
+    <p id="gpsInfo" class="gpsline" role="status"></p>
+    <p id="gpsHelp" class="mut hide"></p>
+  </section>
   <div class="fld"><span>Schrift</span>
     <div class="seg" role="group" aria-label="Schriftgröße">
       <button type="button" data-set-fs="klein" aria-pressed="false">Klein</button>
@@ -158,7 +165,8 @@
       <button type="button" data-set-fs="gross" aria-pressed="false">Groß</button>
     </div>
   </div>
-  <label class="fld"><span>Testmodus (Simulation)</span><input type="checkbox" id="testMode"></label>
+  <label class="fld"><span>Testmodus (Simulation, nur für den PC)</span><input type="checkbox" id="testMode"></label>
+  <p class="mut">Es ist immer nur eine Positionsquelle aktiv: GPS oder Testmodus.</p>
   <p>Kartendaten: © OpenStreetMap contributors (ODbL).</p>
   <section class="datasec" aria-label="Daten auf dem Tablet">
     <h3>Daten auf dem Tablet</h3>
@@ -172,16 +180,28 @@
     <p id="dataMsg" class="mut" role="status"></p>
     <p id="sysInfo" class="mut"></p>
   </section>
+  <section class="datasec" aria-label="Version und Update">
+    <h3>Version</h3>
+    <p id="verInfo"></p>
+    <div class="btnrow">
+      <button type="button" id="btnUpdate">Nach Update suchen</button>
+      <button type="button" id="btnReload" class="primary hide">Jetzt neu laden</button>
+    </div>
+    <p id="updMsg" class="mut" role="status"></p>
+  </section>
   <div class="actions"><button type="button" id="infoClose" class="primary">Schließen</button></div>
 </dialog>
 
+<script src="js/version.js"></script>
 <script src="js/geo.js"></script>
 <script src="js/route.js"></script>
 <script src="js/map.js"></script>
 <script src="js/sim.js"></script>
+<script src="js/gps.js"></script>
 <script src="js/storage.js"></script>
 <script src="js/app.js"></script>
 <script src="js/details.js"></script>
 <script src="js/daten.js"></script>
+<script src="js/update.js"></script>
 </body>
 </html>

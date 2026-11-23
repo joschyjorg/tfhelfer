@@ -2,12 +2,13 @@
 // Service Worker: macht die App offline startfähig.
 // VERSION wird beim Bauen des Pakets (tools/paket_bauen.py) auf einen neuen Wert gesetzt, also bei jeder Veröffentlichung neu.
 // Dadurch bekommt jede Veröffentlichung einen frischen Cache; alte Caches werden gelöscht.
-const VERSION = '20261123-160008';
+const VERSION = '20261123-191333';
 const CACHE = 'tf-helfer-' + VERSION;
 const FILES = [
   './', 'index.html', 'style.css', 'manifest.webmanifest', 'network.json',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
-  'js/geo.js', 'js/route.js', 'js/map.js', 'js/sim.js', 'js/storage.js', 'js/app.js', 'js/details.js', 'js/daten.js'
+  'js/version.js', 'js/geo.js', 'js/route.js', 'js/map.js', 'js/sim.js', 'js/gps.js', 'js/storage.js',
+  'js/app.js', 'js/details.js', 'js/daten.js', 'js/update.js'
 ];
 const NETWORK_TIMEOUT_MS = 4000;
 
@@ -15,8 +16,14 @@ self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE)
       .then(c => Promise.all(FILES.map(f => c.add(new Request(f, { cache: 'reload' })))))
-      .then(() => self.skipWaiting())
+    // Absichtlich kein skipWaiting(): eine neue Version wartet, bis die App geschlossen wird
+    // oder der Benutzer in Info "Jetzt neu laden" wählt (siehe js/update.js). Beim allerersten Installieren startet sie sofort.
   );
+});
+
+// Die Seite bittet die wartende Version, sich zu aktivieren
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
@@ -51,6 +58,8 @@ async function networkFirst(req) {
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
-  if (new URL(req.url).origin !== self.location.origin) return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.searchParams.has('check')) return; // Update-Prüfung: immer echte Antwort vom Server, nie aus dem Cache
   event.respondWith(networkFirst(req));
 });
