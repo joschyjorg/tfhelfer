@@ -2,10 +2,10 @@
 // Service Worker: macht die App offline startfähig.
 // VERSION wird beim Bauen des Pakets (tools/paket_bauen.py) auf einen neuen Wert gesetzt, also bei jeder Veröffentlichung neu.
 // Dadurch bekommt jede Veröffentlichung einen frischen Cache; alte Caches werden gelöscht.
-const VERSION = '20261123-191333';
+const VERSION = '20261123-200419';
 const CACHE = 'tf-helfer-' + VERSION;
 const FILES = [
-  './', 'index.html', 'style.css', 'manifest.webmanifest', 'network.json',
+  './', 'index.html', 'style.css', 'manifest.webmanifest', 'network.json', 'hintergrund.json',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
   'js/version.js', 'js/geo.js', 'js/route.js', 'js/map.js', 'js/sim.js', 'js/gps.js', 'js/storage.js',
   'js/app.js', 'js/details.js', 'js/daten.js', 'js/update.js'

@@ -477,6 +477,16 @@ function applyFs(v) {
 }
 fsBtns.forEach(b => { b.onclick = () => applyFs(b.dataset.setFs); });
 
+// Hintergrundkarte (Natural Earth) an/aus, Standard an, Auswahl wird gemerkt
+const bgBtns = document.querySelectorAll('[data-set-bg]');
+function applyBg(v) {
+  if (v !== 'aus') v = 'an';
+  map.setBackgroundVisible(v === 'an');
+  bgBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.setBg === v)));
+  store.set('tf.bg', v);
+}
+bgBtns.forEach(b => { b.onclick = () => applyBg(b.dataset.setBg); });
+
 // Testmodus: nur auf Wunsch (PC), standardmäßig aus, wird nicht gespeichert. Er schaltet das GPS aus (nur eine Quelle).
 $('testMode').onchange = e => setSource(e.target.checked ? 'sim' : 'none');
 $('infoBtn').onclick = () => $('infoDlg').showModal();
@@ -518,6 +528,9 @@ async function loadJson(url, required) {
 async function init() {
   applyTheme(store.get('tf.theme') || 'auto');
   applyFs(store.get('tf.fs') || 'mittel');
+  applyBg(store.get('tf.bg') || 'an');
+  // Hintergrundkarte: optional, die App läuft auch ohne sie
+  loadJson('hintergrund.json', false).then(d => { if (d && d.format_version === 1) map.setBackground(d); });
   state.personal = (await Store.loadPersonal()) || {};   // ohne persönliche Daten läuft die App trotzdem
   try {
     state.net = await loadJson(DATA.network, true);
