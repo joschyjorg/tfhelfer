@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tf-Helfer</title>
+<meta name="theme-color" content="#0f151d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <strong class="brand">Tf-Helfer</strong>
+  <button id="routeBtn" class="routebtn" type="button" aria-haspopup="dialog">
+    <span class="lab">Route</span> <span id="routeName">…</span>
+  </button>
+  <div class="seg" role="group" aria-label="Darstellung">
+    <button type="button" data-set-theme="hell" aria-pressed="false">Hell</button>
+    <button type="button" data-set-theme="dunkel" aria-pressed="false">Dunkel</button>
+    <button type="button" data-set-theme="auto" aria-pressed="true">Automatisch</button>
+  </div>
+  <button id="bsBtn" type="button" aria-haspopup="dialog">Betriebsstellen</button>
+  <button id="infoBtn" type="button" aria-haspopup="dialog">Info</button>
+</header>
+
+<main>
+  <section class="mapwrap" aria-label="Karte">
+    <canvas id="map" role="img" aria-label="Streckenkarte, Norden oben"></canvas>
+    <div class="mapctl">
+      <button id="zin" type="button" aria-label="Vergrößern">+</button>
+      <button id="zout" type="button" aria-label="Verkleinern">−</button>
+      <button id="zall" type="button" class="wide">Gesamte Strecke</button>
+    </div>
+    <div id="simPanel" class="simpanel hide" aria-label="Testmodus Simulation">
+      <div class="simrow">
+        <button id="simPlay" type="button" class="primary">Start</button>
+        <input id="simPos" type="range" min="0" max="1000" step="5" value="0" aria-label="Position entlang der Strecke">
+        <span id="simPosVal" class="mut"></span>
+      </div>
+      <div class="simrow">
+        <label>Tempo
+          <select id="simSpeed">
+            <option value="40">40 km/h</option>
+            <option value="80" selected>80 km/h</option>
+            <option value="100">100 km/h</option>
+            <option value="120">120 km/h</option>
+          </select>
+        </label>
+        <label>Zeitraffer
+          <select id="simFactor">
+            <option value="1">×1</option>
+            <option value="10">×10</option>
+            <option value="30" selected>×30</option>
+            <option value="90">×90</option>
+          </select>
+        </label>
+        <label class="grow">Versatz
+          <input id="simOff" type="range" min="-600" max="600" step="10" value="0" aria-label="Seitlicher Versatz">
+        </label>
+        <span id="simOffVal" class="mut">0,0 km</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="side" aria-label="Streckeninformationen">
+    <div id="offwarn" class="box warn hide" role="alert">
+      Nicht auf der Strecke <span id="offdist" class="offdist"></span>
+    </div>
+    <div id="errbox" class="box err hide" role="alert"></div>
+    <div id="remind" class="box remind hide" role="status">
+      <span id="remindText"></span>
+      <button id="remindBtn" type="button">Sichern</button>
+    </div>
+
+    <div class="box mini" id="lastBox">
+      <span class="lab">Zuletzt</span>
+      <button id="lastName" class="namelink mininame" type="button" disabled>—</button>
+      <button id="lastPhone" type="button" class="phonelink hide" aria-label="Alle Rufnummern"></button>
+    </div>
+
+    <div class="box next">
+      <div class="lab">Entfernung bis zur nächsten Betriebsstelle</div>
+      <div id="distNext" class="big">–</div>
+      <div id="nextName" class="name">–</div>
+      <div id="details" class="details"></div>
+    </div>
+
+    <div class="box mini" id="afterBox">
+      <span class="lab">Danach</span>
+      <button id="afterName" class="namelink mininame" type="button" disabled>—</button>
+      <span id="afterDist" class="minidist"></span>
+      <button id="afterPhone" type="button" class="phonelink hide" aria-label="Alle Rufnummern"></button>
+    </div>
+
+    <div class="box goal" id="goalBox">
+      <span class="lab">Entfernung bis Ziel</span>
+      <b id="distGoal" class="goalv">–</b>
+      <span id="goalName" class="mut"></span>
+    </div>
+
+  </section>
+</main>
+
+<dialog id="routeDlg" aria-labelledby="routeTitle">
+  <form method="dialog" id="routeForm">
+    <h2 id="routeTitle">Route</h2>
+    <label class="fld">Start <select id="selStart"></select></label>
+    <label class="fld">Ziel <select id="selZiel"></select></label>
+    <button type="button" id="swapBtn">Richtung tauschen</button>
+    <fieldset class="via"><legend>Zwischenpunkte (optional)</legend><div id="viaList"></div></fieldset>
+    <p id="routeErr" class="errtxt" role="alert"></p>
+    <div class="actions">
+      <button type="button" id="routeCancel">Abbrechen</button>
+      <button type="submit" id="routeOk" class="primary">Übernehmen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="detailDlg" class="bigdlg" aria-labelledby="detailTitle">
+  <div class="dhd"><h2 id="detailTitle">Details</h2><button id="detailClose" type="button" class="closex" aria-label="Schließen">✕</button></div>
+  <div id="detailBody" class="dbody"></div>
+</dialog>
+
+<dialog id="bsDlg" class="bigdlg" aria-labelledby="bsTitle">
+  <div class="dhd"><h2 id="bsTitle">Betriebsstellen</h2><button id="bsClose" type="button" class="closex" aria-label="Schließen">✕</button></div>
+  <div class="dbody">
+    <input id="bsSearch" type="search" class="search" placeholder="Name oder Ril 100" autocomplete="off" aria-label="Suche nach Name oder Ril 100">
+    <div id="bsList" class="bslist"></div>
+  </div>
+</dialog>
+
+<dialog id="phoneDlg" aria-labelledby="phoneTitle">
+  <h2 id="phoneTitle">Rufnummern</h2>
+  <div id="phoneList"></div>
+  <div class="actions"><button type="button" id="phoneClose" class="primary">Schließen</button></div>
+</dialog>
+
+<dialog id="confirmDlg" aria-labelledby="confirmTitle">
+  <h2 id="confirmTitle">Bestätigen</h2>
+  <p id="confirmText"></p>
+  <div class="actions">
+    <button type="button" id="confirmNo">Abbrechen</button>
+    <button type="button" id="confirmYes" class="primary">Ersetzen</button>
+  </div>
+</dialog>
+
+<dialog id="infoDlg" aria-labelledby="infoTitle">
+  <h2 id="infoTitle">Info</h2>
+  <p>Tf-Helfer ist ein persönliches Hilfsmittel. Es ersetzt nicht EBuLa, Fahrplan, La und Streckenbuch.</p>
+  <p>Entfernungen werden entlang der Streckengeometrie berechnet. Das sind keine Kilometerangaben aus dem Streckenbuch.</p>
+  <p>Die Position stammt derzeit aus dem Testmodus (Simulation). GPS folgt später.</p>
+  <div class="fld"><span>Schrift</span>
+    <div class="seg" role="group" aria-label="Schriftgröße">
+      <button type="button" data-set-fs="klein" aria-pressed="false">Klein</button>
+      <button type="button" data-set-fs="mittel" aria-pressed="true">Mittel</button>
+      <button type="button" data-set-fs="gross" aria-pressed="false">Groß</button>
+    </div>
+  </div>
+  <label class="fld"><span>Testmodus (Simulation)</span><input type="checkbox" id="testMode"></label>
+  <p>Kartendaten: © OpenStreetMap contributors (ODbL).</p>
+  <section class="datasec" aria-label="Daten auf dem Tablet">
+    <h3>Daten auf dem Tablet</h3>
+    <p id="dataInfo" class="mut"></p>
+    <div class="btnrow">
+      <button type="button" id="btnSichern">Sichern</button>
+      <button type="button" id="btnLaden">Laden</button>
+      <button type="button" id="btnRestore" class="hide">Vorherige Version</button>
+    </div>
+    <input type="file" id="fileIn" accept=".json,application/json" class="hide" aria-label="Datei auswählen">
+    <p id="dataMsg" class="mut" role="status"></p>
+    <p id="sysInfo" class="mut"></p>
+  </section>
+  <div class="actions"><button type="button" id="infoClose" class="primary">Schließen</button></div>
+</dialog>
+
+<script src="js/geo.js"></script>
+<script src="js/route.js"></script>
+<script src="js/map.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/app.js"></script>
+<script src="js/details.js"></script>
+<script src="js/daten.js"></script>
+</body>
+</html>
