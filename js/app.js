@@ -277,10 +277,20 @@ function herkunftText(rec) {
   ((rec && rec.auch_in) || []).forEach(x => parts.push(one(x.strecke, x.region)));
   return parts.join(', ');
 }
-// Verweise "Siehe Strecke N", deren Strecke noch nicht geladen ist
-function fehlendeStrecken(p) {
+// Verweise "Siehe Strecke N" / "Siehe auch Strecke N", deren Strecke noch nicht geladen ist: Texte für Hauptkarte und Details
+function verweisTexte(p) {
   const have = new Set(((p && p.strecke) || []).map(x => String(x.nummer)));
-  return [...new Set(((p && p.verweise) || []).map(v => String(v.nummer)))].filter(n => !have.has(n));
+  const auch = {};   // Nummer -> true, wenn nur "siehe auch"
+  ((p && p.verweise) || []).forEach(v => {
+    const n = String(v.nummer);
+    if (have.has(n)) return;
+    auch[n] = auch[n] === undefined ? !!v.auch : auch[n] && !!v.auch;
+  });
+  const voll = Object.keys(auch).filter(n => !auch[n]), mehr = Object.keys(auch).filter(n => auch[n]);
+  const out = [];
+  if (voll.length) out.push('Daten in Strecke ' + voll.join(', ') + ': noch nicht geladen');
+  if (mehr.length) out.push('Weitere Angaben in Strecke ' + mehr.join(', ') + ': noch nicht geladen');
+  return out;
 }
 function detailRows(ril, idx) {
   const p = state.personal.stations && state.personal.stations[ril];
@@ -288,8 +298,7 @@ function detailRows(ril, idx) {
   if (!p) return rows;
   const strecke = idx != null ? routeStrecken(idx) : streckeNummern(ril);
   if (strecke.length) rows.push({ label: 'Strecke', items: [{ text: strecke.join(', ') }] });
-  const fehl = fehlendeStrecken(p);
-  if (fehl.length) rows.push({ label: 'Hinweis', items: [{ text: 'Daten in Strecke ' + fehl.join(', ') + ': noch nicht geladen' }] });
+  verweisTexte(p).forEach(t => rows.push({ label: 'Hinweis', items: [{ text: t }] }));
   const list = phoneList(ril);
   const ph = list.find(x => x.haupt);
   if (ph) rows.push({ label: 'Rufnummer', phone: list.length > 1 || !!(ph.kurzwahl || ph.zustaendigkeit), items: [{ text: phoneMain(ph) }] });
@@ -620,11 +629,19 @@ async function init() {
   const ids = state.net.stations.map(s => s.ril100);
   let sel = null;
   try { sel = JSON.parse(store.get('tf.route')); } catch (e) { sel = null; }
-  if (!sel || !ids.includes(sel.start) || !ids.includes(sel.ziel) || sel.start === sel.ziel) {
-    sel = { start: ids[0], ziel: ids[ids.length - 1], via: [] };
-  }
-  sel.via = (sel.via || []).filter(v => ids.includes(v));
-  if (applyRoute(sel)) applyRoute({ start: ids[0], ziel: ids[ids.length - 1], via: [] });
+  // Standardroute, wenn keine gemerkte gültig ist: vom ersten Eintrag zur am weitesten entfernten Betriebsstelle, die verbunden ist
+  // (die Daten können aus mehreren getrennten Strecken bestehen, dann gibt es zwischen erster und letzter keinen Weg)
+  const standard = () => {
+    for (const a of ids) {
+      for (let k = ids.length - 1; k >= 0; k--) {
+        if (ids[k] !== a && !Route.build(state.net, a, ids[k], []).error) return { start: a, ziel: ids[k], via: [] };
+      }
+    }
+    return null;
+  };
+  if (!sel || !ids.includes(sel.start) || !ids.includes(sel.ziel) || sel.start === sel.ziel) sel = standard();
+  if (sel) sel.via = (sel.via || []).filter(v => ids.includes(v));
+  if (!sel || applyRoute(sel)) { const d = standard(); if (d) applyRoute(d); }
   setInterval(() => { sim.tick(performance.now()); }, 50);
   // Jede Sekunde: Signalzustand und Anzeige in Info prüfen. Die Simulation im Stand meldet sich weiter (wie ein GPS im Stand).
   setInterval(() => {

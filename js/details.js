@@ -138,8 +138,7 @@ function openDetails(ril) {
   if (main && main.bezeichnung) head.append(infoRow('Zuständig', main.bezeichnung));
   body.append(head);
   // Verweise "Siehe Strecke N": Daten dieser Betriebsstelle stehen in einer anderen Strecke, die noch nicht geladen ist
-  const fehl = fehlendeStrecken(p);
-  if (fehl.length) body.append(el('p', 'verweis', 'Daten in Strecke ' + fehl.join(', ') + ': noch nicht geladen'));
+  verweisTexte(p).forEach(t => body.append(el('p', 'verweis', t)));
 
   const zs =((p && p.zs2) || []).filter(z => z.buchstabe || z.richtung);
   const angaben = (p && p.angaben) || [];
