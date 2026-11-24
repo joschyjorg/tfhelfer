@@ -112,6 +112,8 @@ function angabeBlock(a) {
     b.append(wrap);
   }
   if (a.ril) b.append(el('div', 'ril', 'Ril ' + a.ril));
+  const hk = herkunftText(a);
+  if (hk) b.append(el('div', 'herk', hk));
   return b;
 }
 
@@ -128,14 +130,18 @@ function openDetails(ril) {
   head.append(infoRow('Ril 100', ril));
   const typ = stationTyp(net, p);
   if (typ) head.append(infoRow('Typ', typ));
-  const strecke = ((p && p.strecke) || []).map(x => x.nummer).filter(Boolean);
+  const strecke = ((p && p.strecke) || []).filter(x => x.nummer)
+    .map(x => x.nummer + (x.regionen && x.regionen.length ? ' (BZ ' + x.regionen.join(', BZ ') + ')' : ''));
   if (strecke.length) head.append(infoRow('Strecke', strecke.join(', ')));
   const phones = ((p && p.phones) || []).filter(x => x.kurzwahl || x.langwahl || x.nummer);
   const main = phones.find(x => x.haupt);
   if (main && main.bezeichnung) head.append(infoRow('Zuständig', main.bezeichnung));
   body.append(head);
+  // Verweise "Siehe Strecke N": Daten dieser Betriebsstelle stehen in einer anderen Strecke, die noch nicht geladen ist
+  const fehl = fehlendeStrecken(p);
+  if (fehl.length) body.append(el('p', 'verweis', 'Daten in Strecke ' + fehl.join(', ') + ': noch nicht geladen'));
 
-  const zs = ((p && p.zs2) || []).filter(z => z.buchstabe || z.richtung);
+  const zs =((p && p.zs2) || []).filter(z => z.buchstabe || z.richtung);
   const angaben = (p && p.angaben) || [];
   let any = false;
 
@@ -148,6 +154,8 @@ function openDetails(ril) {
       d.append(el('b', '', (ph.bezeichnung || 'Rufnummer') + (ph.haupt ? ' ★' : '')));
       [['Kurzwahl', ph.kurzwahl], ['Langwahl', ph.langwahl], ['Nummer', ph.nummer], ['Zuständigkeit', ph.zustaendigkeit]]
         .forEach(([l, v]) => { if (v) { const r = el('div', 'pline'); r.append(el('span', 'mut', l), el('span', '', v)); d.append(r); } });
+      const hk = herkunftText(ph);
+      if (hk) d.append(el('div', 'herk', hk));
       s.append(d);
     });
     body.append(s);
@@ -161,6 +169,8 @@ function openDetails(ril) {
       const d = el('div', 'dval');
       if (z.buchstabe) d.append(el('span', 'chip', z.buchstabe));
       d.append(el('span', '', [z.richtung, z.standort ? '(' + z.standort + ')' : ''].filter(Boolean).join(' ')));
+      const hk = herkunftText(z);
+      if (hk) d.append(el('span', 'herk', hk));
       s.append(d);
     });
     body.append(s);

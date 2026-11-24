@@ -13,7 +13,7 @@ function createMap(canvas, getColors) {
     route: null, pos: null, heading: 0, s: 0, stale: false,
     side: SIDES[3], lastFollowSide: SIDES[3],
     follow: true, overview: false, cx: 0, cy: 0,   // cx, cy: Kartenmitte (Meter), nur wenn nicht gefolgt wird
-    bgData: null, bgOn: true, bg: null, moving: false,
+    bgData: null, bgOn: true, bg: null, moving: false, focus: 0,
     w: 0, h: 0, dpr: 1
   };
   const clampSide = (v, max) => Math.max(SIDE_MIN, Math.min(max == null ? SIDE_MAX : max, v));
@@ -145,6 +145,69 @@ function createMap(canvas, getColors) {
     }
   }
 
+  // ---------- Beschriftung der Betriebsstellen ----------
+  // Wichtigkeit: Start, Ziel, nächste und übernächste Betriebsstelle immer (0), dann Bf (1), Hp (2), alles andere (3).
+  // Jede Beschriftung probiert rechts, links, oben, unten und wird nur gezeigt, wenn ihr Rahmen keine schon gesetzte
+  // Beschriftung, keinen Stationspunkt, den Pfeil und keine Bedienelemente der Karte berührt. Übrige bleiben Punkte
+  // und bekommen ihre Beschriftung beim Hineinzoomen. Die Städtenamen des Hintergrunds weichen den Beschriftungen aus.
+  const PRIO_TYP = { Bf: 1, Hp: 2 };
+  const LABEL_H = 26, DOT_R = 11, GAP = 3;
+  const hit = (a, b, pad) => a.x0 - pad < b.x1 && a.x1 + pad > b.x0 && a.y0 - pad < b.y1 && a.y1 + pad > b.y0;
+
+  function controlRects() {
+    const out = [];
+    const host = canvas.parentElement, cr = canvas.getBoundingClientRect();
+    if (!host) return out;
+    host.querySelectorAll('.mapctl, .gpsstat:not(.hide), .simpanel:not(.hide)').forEach(e => {
+      const r = e.getBoundingClientRect();
+      if (r.width) out.push({ x0: r.left - cr.left, y0: r.top - cr.top, x1: r.right - cr.left, y1: r.bottom - cr.top });
+    });
+    return out;
+  }
+
+  function planLabels(route, px, w, h) {
+    ctx.font = '700 20px system-ui, "Segoe UI", Roboto, sans-serif';
+    const n = route.stations.length, f = st.focus || 0;
+    const items = route.stations.map((s, i) => {
+      const q = px(s.lat, s.lon);
+      const inside = q[0] > -20 && q[0] < w + 20 && q[1] > -20 && q[1] < h + 20;
+      return { s, i, q, inside, tw: inside ? ctx.measureText(s.name).width : 0, label: null };
+    });
+    const dots = items.filter(it => it.inside).map(it => ({ it, r: { x0: it.q[0] - DOT_R, x1: it.q[0] + DOT_R, y0: it.q[1] - DOT_R, y1: it.q[1] + DOT_R } }));
+    const fixed = controlRects();
+    if (st.pos) { const q = px(st.pos.lat, st.pos.lon); fixed.push({ x0: q[0] - 30, x1: q[0] + 30, y0: q[1] - 30, y1: q[1] + 30 }); }
+    const prio = it => (it.i === 0 || it.i === n - 1 || it.i === f || it.i === f + 1) ? 0 : (PRIO_TYP[it.s.typ] || 3);
+    const order = items.filter(it => it.inside).sort((a, b) => prio(a) - prio(b) || Math.abs(a.i - f) - Math.abs(b.i - f));
+    const placed = [];
+    for (const it of order) {
+      const x = it.q[0], y = it.q[1], tw = it.tw;
+      const cands = [
+        { pos: 'right', r: { x0: x + 14, x1: x + 14 + tw, y0: y - LABEL_H / 2, y1: y + LABEL_H / 2 } },
+        { pos: 'left', r: { x0: x - 14 - tw, x1: x - 14, y0: y - LABEL_H / 2, y1: y + LABEL_H / 2 } },
+        { pos: 'top', r: { x0: x - tw / 2, x1: x + tw / 2, y0: y - 14 - LABEL_H, y1: y - 14 } },
+        { pos: 'bottom', r: { x0: x - tw / 2, x1: x + tw / 2, y0: y + 14, y1: y + 14 + LABEL_H } }
+      ];
+      const free = r => r.x0 >= 2 && r.x1 <= w - 2 && r.y0 >= 2 && r.y1 <= h - 2 &&
+        !placed.some(p => hit(r, p, GAP)) && !fixed.some(p => hit(r, p, 2)) && !dots.some(d => d.it !== it && hit(r, d.r, 1));
+      let best = cands.find(cd => free(cd.r));
+      if (!best && prio(it) === 0) {
+        // Wichtige Stationen bekommen immer eine Beschriftung: die Stelle mit der kleinsten Überdeckung
+        // Rahmen erst in den sichtbaren Bereich schieben, dann die Stelle mit der kleinsten Überdeckung nehmen
+        const inside = r => {
+          const dx = r.x0 < 2 ? 2 - r.x0 : (r.x1 > w - 2 ? (w - 2) - r.x1 : 0);
+          const dy = r.y0 < 2 ? 2 - r.y0 : (r.y1 > h - 2 ? (h - 2) - r.y1 : 0);
+          return { x0: r.x0 + dx, x1: r.x1 + dx, y0: r.y0 + dy, y1: r.y1 + dy };
+        };
+        const cost = r => placed.concat(fixed).reduce((s, p) => s + (hit(r, p, 0) ? Math.min(r.x1, p.x1) - Math.max(r.x0, p.x0) : 0), 0);
+        const moved = cands.map(cd => ({ pos: cd.pos, r: inside(cd.r) }));
+        best = moved.sort((a, b) => cost(a.r) - cost(b.r))[0];
+      }
+      if (best) { it.label = best; placed.push(best.r); }
+    }
+    const obst = dots.map(d => d.r).concat(fixed);
+    return { items, placed, obst };
+  }
+
   // ---------- Zeichnen ----------
   function draw() {
     const w = st.w, h = st.h;
@@ -158,20 +221,9 @@ function createMap(canvas, getColors) {
     const px = (lat, lon) => { const q = xy(lat, lon); return [w / 2 + (q[0] - v.cx) * v.ppm, h / 2 + (q[1] - v.cy) * v.ppm]; };
     const route = st.route;
 
-    // Platz der Betriebsstellen-Namen und des Pfeils, damit Städtenamen nicht darüber liegen
-    ctx.font = '700 20px system-ui, "Segoe UI", Roboto, sans-serif';
-    const avoid = [];
-    const labels = route.stations.map((s, i) => {
-      const q = px(s.lat, s.lon);
-      const right = i % 2 === 1, tw = ctx.measureText(s.name).width;
-      const inside = !(q[0] < -60 || q[0] > w + 60 || q[1] < -30 || q[1] > h + 30);
-      if (inside) {
-        avoid.push({ x0: q[0] - 14, x1: q[0] + 14, y0: q[1] - 14, y1: q[1] + 14 });
-        avoid.push(right ? { x0: q[0] + 12, x1: q[0] + 22 + tw, y0: q[1] - 15, y1: q[1] + 15 } : { x0: q[0] - 22 - tw, x1: q[0] - 12, y0: q[1] - 15, y1: q[1] + 15 });
-      }
-      return { q, right, inside };
-    });
-    if (st.pos) { const q = px(st.pos.lat, st.pos.lon); avoid.push({ x0: q[0] - 30, x1: q[0] + 30, y0: q[1] - 30, y1: q[1] + 30 }); }
+    // Beschriftung planen; die Hintergrundkarte (Städte) weicht Beschriftungen, Punkten und Pfeil aus
+    const plan = planLabels(route, px, w, h);
+    const avoid = plan.obst.concat(plan.placed.map(r => ({ x0: r.x0 - 4, x1: r.x1 + 4, y0: r.y0 - 4, y1: r.y1 + 4 })));
 
     drawBackground(c, v, w, h, avoid);
 
@@ -190,20 +242,23 @@ function createMap(canvas, getColors) {
       if (done.length > 1) line(done, c.done, 6);
     }
 
-    // Betriebsstellen mit Namen
+    // Betriebsstellen: Punkte immer, Namen nur wo Platz ist
     ctx.font = '700 20px system-ui, "Segoe UI", Roboto, sans-serif';
     ctx.textBaseline = 'middle';
-    route.stations.forEach((s, i) => {
-      const { q, right, inside } = labels[i];
-      if (!inside) return;
-      ctx.beginPath(); ctx.arc(q[0], q[1], 9, 0, 7);
+    for (const it of plan.items) {
+      if (!it.inside) continue;
+      ctx.beginPath(); ctx.arc(it.q[0], it.q[1], 9, 0, 7);
       ctx.fillStyle = c.panel; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = c.tx; ctx.stroke();
-      ctx.textAlign = right ? 'left' : 'right';
-      const tx = q[0] + (right ? 18 : -18);
+    }
+    for (const it of plan.items) {
+      if (!it.label) continue;
+      const r = it.label.r, pos = it.label.pos, cy = (r.y0 + r.y1) / 2;
+      ctx.textAlign = pos === 'right' ? 'left' : pos === 'left' ? 'right' : 'center';
+      const tx = pos === 'right' ? r.x0 : pos === 'left' ? r.x1 : (r.x0 + r.x1) / 2;
       ctx.lineWidth = 5; ctx.strokeStyle = c.mapbg; ctx.lineJoin = 'round';
-      ctx.strokeText(s.name, tx, q[1]);
-      ctx.fillStyle = c.tx; ctx.fillText(s.name, tx, q[1]);
-    });
+      ctx.strokeText(it.s.name, tx, cy);
+      ctx.fillStyle = c.tx; ctx.fillText(it.s.name, tx, cy);
+    }
 
     // Positionspfeil (dreht sich mit der Fahrtrichtung); grau, wenn das GPS-Signal fehlt oder ungenau ist
     if (st.pos) {
@@ -346,6 +401,7 @@ function createMap(canvas, getColors) {
     setBackground(data) { st.bgData = data; projectBackground(); draw(); },
     setBackgroundVisible(on) { st.bgOn = !!on; draw(); },
     setPosition(pos, heading, s) { st.pos = pos; st.heading = heading; st.s = s; scheduleDraw(); },
+    setFocus(i) { if (st.focus !== i) { st.focus = i; scheduleDraw(); } },
     setStale(v) { if (st.stale !== v) { st.stale = v; scheduleDraw(); } },
     zoomIn() { zoomStep(-1); },
     zoomOut() { zoomStep(1); },

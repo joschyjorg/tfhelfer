@@ -162,3 +162,22 @@ dialog h2{margin:0 0 10px;font-size:1.5em}
   main{grid-template-columns:1fr;grid-template-rows:1fr 1fr}
 }
 #updMsg.bad{color:var(--warnbg);font-weight:700}
+.herk{display:block;color:var(--mut);font-size:.8em;font-weight:600}
+.dval .herk{margin-left:auto;text-align:right}
+.verweis{margin:6px 0 0;padding:6px 10px;border:2px solid var(--bd);border-radius:10px;font-weight:700}
+
+/* Rechte Spalte wie in EBuLa: Fahrt von unten nach oben. Oben Ziel und "Danach" (Zukunft), Mitte die nächste Betriebsstelle, unten "Zuletzt" (Vergangenheit) */
+:root{--future-bg:#e3eefc;--past-bg:#e1e6ec;--past-tx:#323d4b}
+@media (prefers-color-scheme:dark){:root:not([data-theme="hell"]){--future-bg:#132339;--past-bg:#080c11;--past-tx:#b8c3d0}}
+:root[data-theme="dunkel"]{--future-bg:#132339;--past-bg:#080c11;--past-tx:#b8c3d0}
+.invis{visibility:hidden}
+.box.next{flex:1 1 auto;min-height:0;overflow:auto;border-color:var(--route);border-width:3px}
+.box.future{background:var(--future-bg);border-top:6px solid var(--route)}
+.box.past{background:var(--past-bg);border-style:dashed;color:var(--past-tx)}
+.box.past .lab{color:var(--past-tx)}
+.box.past .namelink{color:var(--past-tx)}
+.box.past .phonelink{color:var(--past-tx);background:transparent;border-color:var(--past-tx)}
+.zsrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px;font-weight:700;font-size:1.05em;margin:1px 0}
+.zsst{color:var(--mut);font-size:.85em;font-weight:600}
+.zsc{white-space:nowrap}
+.mini .phonelink{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%}

@@ -76,10 +76,18 @@
       <button id="remindBtn" type="button">Sichern</button>
     </div>
 
-    <div class="box mini" id="lastBox">
-      <span class="lab">Zuletzt</span>
-      <button id="lastName" class="namelink mininame" type="button" disabled>—</button>
-      <button id="lastPhone" type="button" class="phonelink hide" aria-label="Alle Rufnummern"></button>
+    <!-- Reihenfolge wie in EBuLa: Die Fahrt geht von unten nach oben. Oben das Ziel, dann "Danach", die nächste Betriebsstelle, unten "Zuletzt". -->
+    <div class="box goal" id="goalBox">
+      <span class="lab">Entfernung bis Ziel</span>
+      <b id="distGoal" class="goalv">–</b>
+      <span id="goalName" class="mut"></span>
+    </div>
+
+    <div class="box mini future" id="afterBox">
+      <span class="lab">Danach</span>
+      <button id="afterName" class="namelink mininame" type="button" disabled>—</button>
+      <span id="afterDist" class="minidist"></span>
+      <button id="afterPhone" type="button" class="phonelink invis" aria-label="Alle Rufnummern"></button>
     </div>
 
     <div class="box next">
@@ -89,17 +97,10 @@
       <div id="details" class="details"></div>
     </div>
 
-    <div class="box mini" id="afterBox">
-      <span class="lab">Danach</span>
-      <button id="afterName" class="namelink mininame" type="button" disabled>—</button>
-      <span id="afterDist" class="minidist"></span>
-      <button id="afterPhone" type="button" class="phonelink hide" aria-label="Alle Rufnummern"></button>
-    </div>
-
-    <div class="box goal" id="goalBox">
-      <span class="lab">Entfernung bis Ziel</span>
-      <b id="distGoal" class="goalv">–</b>
-      <span id="goalName" class="mut"></span>
+    <div class="box mini past" id="lastBox">
+      <span class="lab">Zuletzt</span>
+      <button id="lastName" class="namelink mininame" type="button" disabled>—</button>
+      <button id="lastPhone" type="button" class="phonelink invis" aria-label="Alle Rufnummern"></button>
     </div>
 
   </section>

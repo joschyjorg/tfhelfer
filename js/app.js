@@ -251,20 +251,60 @@ function phoneList(ril) {
   const p = state.personal.stations && state.personal.stations[ril];
   return ((p && p.phones) || []).filter(x => x.kurzwahl || x.langwahl || x.nummer);
 }
-function detailRows(ril) {
+// Strecken-Nummern einer Betriebsstelle (Streckenbuch/Autor), ohne Verweise
+function streckeNummern(ril) {
+  const p = state.personal.stations && state.personal.stations[ril];
+  return ((p && p.strecke) || []).map(x => String(x.nummer)).filter(Boolean);
+}
+// Strecke, auf der die Route an dieser Betriebsstelle läuft: die Nummer, die die Betriebsstelle mit ihrem Vorgänger
+// (am Anfang mit dem Nachfolger) auf der Route gemeinsam hat. Sonst alle Nummern der Betriebsstelle.
+function routeStrecken(idx) {
+  const st = state.route ? state.route.stations : [];
+  if (idx == null || !st[idx]) return [];
+  const own = streckeNummern(st[idx].ril100);
+  for (const j of [idx - 1, idx + 1]) {
+    if (!st[j]) continue;
+    const common = own.filter(x => streckeNummern(st[j].ril100).includes(x));
+    if (common.length) return common;
+  }
+  return own;
+}
+// Woher stammt ein Eintrag? "Strecke 100 · BZ Nord" (weitere Herkunft, wenn derselbe Eintrag auch aus anderer Strecke kam)
+function herkunftText(rec) {
+  const one = (s, r) => 'Strecke ' + s + (r ? ' · BZ ' + r : '');
+  const parts = [];
+  if (rec && rec.strecke) parts.push(one(rec.strecke, rec.region));
+  ((rec && rec.auch_in) || []).forEach(x => parts.push(one(x.strecke, x.region)));
+  return parts.join(', ');
+}
+// Verweise "Siehe Strecke N", deren Strecke noch nicht geladen ist
+function fehlendeStrecken(p) {
+  const have = new Set(((p && p.strecke) || []).map(x => String(x.nummer)));
+  return [...new Set(((p && p.verweise) || []).map(v => String(v.nummer)))].filter(n => !have.has(n));
+}
+function detailRows(ril, idx) {
   const p = state.personal.stations && state.personal.stations[ril];
   const rows = [];
   if (!p) return rows;
-  const strecke = (p.strecke || []).map(x => x.nummer).filter(Boolean);
+  const strecke = idx != null ? routeStrecken(idx) : streckeNummern(ril);
   if (strecke.length) rows.push({ label: 'Strecke', items: [{ text: strecke.join(', ') }] });
+  const fehl = fehlendeStrecken(p);
+  if (fehl.length) rows.push({ label: 'Hinweis', items: [{ text: 'Daten in Strecke ' + fehl.join(', ') + ': noch nicht geladen' }] });
   const list = phoneList(ril);
   const ph = list.find(x => x.haupt);
   if (ph) rows.push({ label: 'Rufnummer', phone: list.length > 1 || !!(ph.kurzwahl || ph.zustaendigkeit), items: [{ text: phoneMain(ph) }] });
+  else if (list.length) rows.push({ label: 'Rufnummer', phone: true, items: [{ text: 'Keine Hauptnummer gewählt (' + list.length + ' Nummern)' }] });
   const zs = (p.zs2 || []).filter(z => z.buchstabe || z.richtung);
-  if (zs.length) rows.push({
-    label: 'Mögliche Zs 2',
-    items: zs.map(z => ({ chip: z.buchstabe, text: [z.richtung, z.standort ? '(' + z.standort + ')' : ''].filter(Boolean).join(' ') }))
-  });
+  if (zs.length) {
+    // Auf der Hauptkarte kompakt: je Signal-Standort eine Zeile mit allen Buchstaben (Details zeigt die volle Liste)
+    const groups = [];
+    zs.forEach(z => {
+      let g = groups.find(x => x.standort === (z.standort || ''));
+      if (!g) { g = { zs: true, standort: z.standort || '', chips: [] }; groups.push(g); }
+      g.chips.push({ b: z.buchstabe, r: z.richtung });
+    });
+    rows.push({ label: 'Mögliche Zs 2', items: groups });
+  }
   // Hauptkarte: nur Angaben mit sichtbar = "haupt" (Standard: Geschwindigkeit). Der Rest kommt später in "Details".
   const hw = (p.angaben || []).filter(a => a.sichtbar === 'haupt' && (a.titel || a.text));
   // Jede Zeile des Textes wird eine eigene Listenzeile
@@ -282,6 +322,8 @@ function showPhones(ril, name) {
     d.append(el('b', '', (ph.bezeichnung || 'Rufnummer') + (ph.haupt ? ' ★' : '')));
     [['Kurzwahl', ph.kurzwahl], ['Langwahl', ph.langwahl], ['Nummer', ph.nummer], ['Zuständigkeit', ph.zustaendigkeit]]
       .forEach(([l, v]) => { if (v) { const r = el('div', 'pline'); r.append(el('span', 'mut', l), el('span', '', v)); d.append(r); } });
+    const hk = herkunftText(ph);
+    if (hk) d.append(el('div', 'herk', hk));
     box.append(d);
   });
   if (!list.length) box.append(el('div', 'mut', 'Keine Rufnummern hinterlegt.'));
@@ -311,7 +353,8 @@ function setMini(prefix, stn, dist) {
   const btn = $(prefix + 'Phone');
   const list = stn ? phoneList(stn.ril100) : [];
   const ph = list.find(x => x.haupt);
-  btn.classList.toggle('hide', !ph);
+  btn.classList.toggle('invis', !ph);   // Platz bleibt reserviert, damit die Blöcke nicht springen
+  btn.tabIndex = ph ? 0 : -1;
   if (ph) {
     btn.textContent = '☎ ' + phoneMain(ph);
     btn.onclick = () => showPhones(stn.ril100, stn.name);
@@ -326,6 +369,7 @@ function render() {
   const s = pr.s;
   const sts = r.stations;
   updatePassed(s);
+  map.setFocus(state.passed);   // nächste Betriebsstelle: ihre Beschriftung hat auf der Karte Vorrang
   const last = state.passed > 0 ? sts[state.passed - 1] : null;      // Zuletzt: zuletzt passierte Betriebsstelle
   const nx = state.passed < sts.length ? sts[state.passed] : null;   // Hauptanzeige: nächste voraus
   const after = state.passed + 1 < sts.length ? sts[state.passed + 1] : null; // Danach
@@ -341,7 +385,7 @@ function render() {
     nn.append(nb);
   } else nn.textContent = 'Ziel erreicht';
   if (nx) {
-    for (const row of detailRows(nx.ril100)) {
+    for (const row of detailRows(nx.ril100, state.passed)) {
       const d = el('div', 'drow');
       const head = el('div', 'dhead');
       head.append(el('span', 'lab', row.label));
@@ -364,6 +408,18 @@ function render() {
           d.append(hb);
           continue;
         }
+        if (it.zs) {
+          const zr = el('div', 'zsrow');
+          if (it.standort) zr.append(el('span', 'zsst', it.standort + ':'));
+          it.chips.forEach(ch => {
+            const sp = el('span', 'zsc');
+            if (ch.b) sp.append(el('span', 'chip', ch.b));
+            if (ch.r) sp.append(' ' + ch.r);
+            zr.append(sp);
+          });
+          d.append(zr);
+          continue;
+        }
         const v = el('div', 'dval');
         if (it.chip) v.append(el('span', 'chip', it.chip));
         if (it.title) v.append(el('b', 'htitle', it.title));
@@ -375,7 +431,7 @@ function render() {
   }
   const zielSt = r.stations[r.stations.length - 1];
   // Entfernung bis Ziel nur zeigen, wenn die nächste Betriebsstelle nicht schon das Ziel ist
-  $('goalBox').classList.toggle('hide', !nx || nx === zielSt);
+  $('goalBox').classList.toggle('invis', !nx || nx === zielSt); // Platz bleibt erhalten, damit nichts springt
   $('distGoal').textContent = fmtDist(r.total - s);
   $('goalName').textContent = zielSt.name + ' – ' + zielSt.ril100;
 
