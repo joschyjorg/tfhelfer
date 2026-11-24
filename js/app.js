@@ -167,7 +167,7 @@ function updateQuality() {
   const pr = state.proj;
   const off = q === 'ok' && !!pr && pr.off > OFF_ROUTE_M;
   $('offwarn').classList.toggle('hide', !off);
-  if (off) $('offdist').textContent = 'Abstand zur Strecke: ' + fmtDist(pr.off);
+  if (off) setText($('offdist'), 'Abstand zur Strecke: ' + fmtDist(pr.off));
 }
 
 function isMoving() {
@@ -203,7 +203,7 @@ const GPS_HELP = {
 function updateGpsUi() {
   const on = state.source === 'gps';
   const stopped = on && !gps.running;   // z. B. Zugriff verweigert
-  $('gpsBtn').textContent = stopped ? 'Erneut versuchen' : on ? 'GPS ausschalten' : 'GPS einschalten';
+  setText($('gpsBtn'), stopped ? 'Erneut versuchen' : on ? 'GPS ausschalten' : 'GPS einschalten');
   $('gpsBtn').classList.toggle('primary', !on || stopped);
   const line = $('gpsInfo'), help = $('gpsHelp');
   let text = 'GPS ist aus.', bad = false, hint = '';
@@ -221,9 +221,9 @@ function updateGpsUi() {
       if (state.gpsError) { hint = GPS_HELP[state.gpsError.code]; }
     }
   }
-  line.textContent = text;
+  setText(line, text);
   line.classList.toggle('bad', bad);
-  help.textContent = hint || '';
+  setText(help, hint || '');
   help.classList.toggle('hide', !hint);
 }
 $('gpsBtn').onclick = () => {
@@ -342,30 +342,102 @@ function updatePassed(s) {
   while (p > 0 && s < st[p - 1].s - HYST_M) p--;
   state.passed = p;
 }
-// Kompakte Blöcke "Zuletzt" und "Danach": Name, (Entfernung), Hauptnummer
+// Text nur ändern, wenn er sich wirklich ändert (sonst wird der Textknoten bei jedem Wert ersetzt)
+function setText(e, text) { if (e.textContent !== text) e.textContent = text; }
+
+// Kompakte Blöcke "Zuletzt" und "Danach": Name, (Entfernung), Hauptnummer.
+// WICHTIG: Schaltflächen und Verweise werden NICHT bei jedem Positionswert neu gebaut. Sonst verschwindet der Knopf zwischen
+// Drücken und Loslassen, und der Klick geht verloren. Name, Telefon und Klick werden nur gesetzt, wenn sich die
+// Betriebsstelle oder die Hauptnummer ändert; bei jedem Wert ändert sich nur der Entfernungstext.
 function setMini(prefix, stn, dist) {
-  const nm = $(prefix + 'Name');
-  nm.textContent = stn ? stn.name : '—';
-  nm.disabled = !stn;
-  nm.onclick = stn ? () => openDetails(stn.ril100) : null;
-  const d = $(prefix + 'Dist');
-  if (d) d.textContent = stn && dist != null ? fmtDist(dist) : '';
-  const btn = $(prefix + 'Phone');
+  const nm = $(prefix + 'Name'), btn = $(prefix + 'Phone');
   const list = stn ? phoneList(stn.ril100) : [];
   const ph = list.find(x => x.haupt);
-  btn.classList.toggle('invis', !ph);   // Platz bleibt reserviert, damit die Blöcke nicht springen
-  btn.tabIndex = ph ? 0 : -1;
-  if (ph) {
-    btn.textContent = '☎ ' + phoneMain(ph);
-    btn.onclick = () => showPhones(stn.ril100, stn.name);
+  const key = stn ? stn.ril100 + '|' + (ph ? phoneMain(ph) : '') : '';
+  if (nm.dataset.key !== key) {
+    nm.dataset.key = key;
+    nm.textContent = stn ? stn.name : '—';
+    nm.disabled = !stn;
+    nm.onclick = stn ? () => openDetails(stn.ril100) : null;
+    btn.classList.toggle('invis', !ph);   // Platz bleibt reserviert, damit die Blöcke nicht springen
+    btn.tabIndex = ph ? 0 : -1;
+    if (ph) {
+      btn.textContent = '☎ ' + phoneMain(ph);
+      btn.onclick = () => showPhones(stn.ril100, stn.name);
+    } else {
+      btn.textContent = '';
+      btn.onclick = null;
+    }
+  }
+  const d = $(prefix + 'Dist');
+  if (d) setText(d, stn && dist != null ? fmtDist(dist) : '');
+}
+
+// Hauptblock: Name der nächsten Betriebsstelle und die Zeilen darunter (Strecke, Rufnummer, Zs 2, Hinweise)
+function buildMain(nx, rows) {
+  const det = $('details'), nn = $('nextName');
+  det.replaceChildren();
+  nn.replaceChildren();
+  if (nx) {
+    const nb = el('button', 'namelink', nx.name + ' – ' + nx.ril100);
+    nb.type = 'button';
+    nb.onclick = () => openDetails(nx.ril100);
+    nn.append(nb);
+  } else nn.textContent = 'Ziel erreicht';
+  for (const row of rows) {
+    const d = el('div', 'drow');
+    const head = el('div', 'dhead');
+    head.append(el('span', 'lab', row.label));
+    if (row.phone) {
+      const b = el('button', 'phonebtn', '☎');
+      b.type = 'button'; b.setAttribute('aria-label', 'Alle Rufnummern');
+      b.onclick = () => showPhones(nx.ril100, nx.name);
+      head.append(b);
+    }
+    d.append(head);
+    for (const it of row.items) {
+      if (it.lines) {
+        const hb = el('div', 'hblock');
+        if (it.title) hb.append(el('b', 'htitle', it.title));
+        if (it.lines.length) {
+          const ul = el('ul', 'hl');
+          it.lines.forEach(l => ul.append(el('li', '', l)));
+          hb.append(ul);
+        }
+        d.append(hb);
+        continue;
+      }
+      if (it.zs) {
+        const zr = el('div', 'zsrow');
+        if (it.standort) zr.append(el('span', 'zsst', it.standort + ':'));
+        it.chips.forEach(ch => {
+          const sp = el('span', 'zsc');
+          if (ch.b) sp.append(el('span', 'chip', ch.b));
+          if (ch.r) sp.append(' ' + ch.r);
+          zr.append(sp);
+        });
+        d.append(zr);
+        continue;
+      }
+      const v = el('div', 'dval');
+      if (it.chip) v.append(el('span', 'chip', it.chip));
+      if (it.title) v.append(el('b', 'htitle', it.title));
+      if (it.text) v.append(el('span', '', it.text));
+      d.append(v);
+    }
+    det.append(d);
   }
 }
 
+// Signatur des aufgebauten Hauptblocks: nur wenn sie sich ändert (andere Betriebsstelle, geänderte Daten), wird neu gebaut
+let mainSig = null;
+
 function render() {
   const r = state.route, pr = state.proj;
-  const det = $('details');
-  det.replaceChildren();
-  if (!r || !pr) return;
+  if (!r || !pr) {
+    if (mainSig !== null) { $('details').replaceChildren(); $('nextName').replaceChildren(); mainSig = null; }
+    return;
+  }
   const s = pr.s;
   const sts = r.stations;
   updatePassed(s);
@@ -375,70 +447,20 @@ function render() {
   const after = state.passed + 1 < sts.length ? sts[state.passed + 1] : null; // Danach
   setMini('last', last, null);
   setMini('after', after, after ? after.s - s : null);
-  $('distNext').textContent = nx ? fmtDist(nx.s - s) : fmtDist(0);
-  const nn = $('nextName');
-  nn.replaceChildren();
-  if (nx) {
-    const nb = el('button', 'namelink', nx.name + ' – ' + nx.ril100);
-    nb.type = 'button';
-    nb.onclick = () => openDetails(nx.ril100);
-    nn.append(nb);
-  } else nn.textContent = 'Ziel erreicht';
-  if (nx) {
-    for (const row of detailRows(nx.ril100, state.passed)) {
-      const d = el('div', 'drow');
-      const head = el('div', 'dhead');
-      head.append(el('span', 'lab', row.label));
-      if (row.phone) {
-        const b = el('button', 'phonebtn', '☎');
-        b.type = 'button'; b.setAttribute('aria-label', 'Alle Rufnummern');
-        b.onclick = () => showPhones(nx.ril100, nx.name);
-        head.append(b);
-      }
-      d.append(head);
-      for (const it of row.items) {
-        if (it.lines) {
-          const hb = el('div', 'hblock');
-          if (it.title) hb.append(el('b', 'htitle', it.title));
-          if (it.lines.length) {
-            const ul = el('ul', 'hl');
-            it.lines.forEach(l => ul.append(el('li', '', l)));
-            hb.append(ul);
-          }
-          d.append(hb);
-          continue;
-        }
-        if (it.zs) {
-          const zr = el('div', 'zsrow');
-          if (it.standort) zr.append(el('span', 'zsst', it.standort + ':'));
-          it.chips.forEach(ch => {
-            const sp = el('span', 'zsc');
-            if (ch.b) sp.append(el('span', 'chip', ch.b));
-            if (ch.r) sp.append(' ' + ch.r);
-            zr.append(sp);
-          });
-          d.append(zr);
-          continue;
-        }
-        const v = el('div', 'dval');
-        if (it.chip) v.append(el('span', 'chip', it.chip));
-        if (it.title) v.append(el('b', 'htitle', it.title));
-        if (it.text) v.append(el('span', '', it.text));
-        d.append(v);
-      }
-      det.append(d);
-    }
-  }
+  setText($('distNext'), nx ? fmtDist(nx.s - s) : fmtDist(0));
+  const rows = nx ? detailRows(nx.ril100, state.passed) : [];
+  const sig = (nx ? nx.ril100 : 'ziel') + '|' + state.passed + '|' + JSON.stringify(rows);
+  if (sig !== mainSig) { mainSig = sig; buildMain(nx, rows); }
   const zielSt = r.stations[r.stations.length - 1];
   // Entfernung bis Ziel nur zeigen, wenn die nächste Betriebsstelle nicht schon das Ziel ist
   $('goalBox').classList.toggle('invis', !nx || nx === zielSt); // Platz bleibt erhalten, damit nichts springt
-  $('distGoal').textContent = fmtDist(r.total - s);
-  $('goalName').textContent = zielSt.name + ' – ' + zielSt.ril100;
+  setText($('distGoal'), fmtDist(r.total - s));
+  setText($('goalName'), zielSt.name + ' – ' + zielSt.ril100);
 
   updateQuality(); // "Nicht auf der Strecke" und grau/aktuell je nach Signal
 
   if (!dragging) $('simPos').value = Math.round(sim.s);
-  $('simPosVal').textContent = (sim.s / 1000).toFixed(1).replace('.', ',') + ' km';
+  setText($('simPosVal'), (sim.s / 1000).toFixed(1).replace('.', ',') + ' km');
 }
 
 // ---------- Route wählen ----------
